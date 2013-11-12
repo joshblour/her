@@ -101,6 +101,16 @@ module Her
 
         # @private
         def assign_nested_attributes(attributes)
+          
+          if attributes.is_a? Hash
+            keys = attributes.keys
+            attributes = if keys.include?('id') || keys.include?(:id)
+              Array.wrap(attributes)
+            else
+              attributes.values
+            end
+          end
+          
           @parent.attributes[@name] = Her::Model::Attributes.initialize_collection(@klass, :data => attributes)
         end
       end
