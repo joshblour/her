@@ -72,7 +72,7 @@ describe Her::Model::ORM do
         builder.use Faraday::Request::UrlEncoded
         builder.adapter :test do |stub|
           stub.get("/users") { |env| [200, {}, { :data => [{ :id => 1, :name => "Tobias Fünke" }, { :id => 2, :name => "Lindsay Fünke" }], :metadata => { :total_pages => 10, :next_page => 2 }, :errors => ["Oh", "My", "God"] }.to_json] }
-          stub.post("/users") { |env| [200, {}, { :data => { :name => "George Michael Bluth" }, :metadata => { :foo => "bar" }, :errors => ["Yes", "Sir"] }.to_json] }
+          stub.post("/users") { |env| [200, {}, { :data => { :name => "George Michael Bluth" }, :metadata => { :foo => "bar" }, :errors => { :title => ["should not be blank"] } }.to_json] }
         end
       end
 
@@ -98,7 +98,12 @@ describe Her::Model::ORM do
 
     it "handles error data on a resource" do
       @user = User.create(:name => "George Michael Bluth")
-      @user.response_errors.should == ["Yes", "Sir"]
+      @user.response_errors.should == { :title => ["should not be blank"] }
+    end
+
+    it "adds resource errors to base" do
+      @user = User.create(:name => "George Michael Bluth")
+      @user.errors.full_messages.should == ["Title should not be blank"]
     end
   end
 
@@ -156,7 +161,9 @@ describe Her::Model::ORM do
         builder.adapter :test do |stub|
           stub.get("/users/1") { |env| [200, {}, { :id => 1, :age => 42 }.to_json] }
           stub.get("/users/2") { |env| [200, {}, { :id => 2, :age => 34 }.to_json] }
+          stub.get("/users?age=42&foo=bar") { |env| [200, {}, [{ :id => 3, :age => 42 }].to_json] }
           stub.get("/users?age=42") { |env| [200, {}, [{ :id => 1, :age => 42 }].to_json] }
+          stub.get("/users?age=40") { |env| [200, {}, [{ :id => 1, :age => 40 }].to_json] }
         end
       end
 
@@ -194,9 +201,52 @@ describe Her::Model::ORM do
     end
 
     it "handles finding with other parameters" do
-      @users = User.all(:age => 42)
+      @users = User.where(:age => 42, :foo => "bar").all
       @users.should be_kind_of(Array)
-      @users.should be_all { |u| u.age == 42 }
+      @users.first.id.should == 3
+    end
+
+    it "handles finding with other parameters and scoped" do
+      @users = User.scoped
+      @users.where(:age => 42).should be_all { |u| u.age == 42 }
+      @users.where(:age => 40).should be_all { |u| u.age == 40 }
+    end
+  end
+
+  context "building resources" do
+    context "when request_new_object_on_build is not set (default)" do
+      before do
+        spawn_model("Foo::User")
+      end
+
+      it "builds a new resource without requesting it" do
+        Foo::User.should_not_receive(:request)
+        @new_user = Foo::User.build(:fullname => "Tobias Fünke")
+        @new_user.new?.should be_true
+        @new_user.fullname.should == "Tobias Fünke"
+      end
+    end
+
+    context "when request_new_object_on_build is set" do
+      before do
+        Her::API.setup :url => "https://api.example.com" do |builder|
+          builder.use Her::Middleware::FirstLevelParseJSON
+          builder.use Faraday::Request::UrlEncoded
+          builder.adapter :test do |stub|
+            stub.get("/users/new") { |env| ok! :id => nil, :fullname => params(env)[:fullname], :email => "tobias@bluthcompany.com" }
+          end
+        end
+
+        spawn_model("Foo::User") { request_new_object_on_build true }
+      end
+
+      it "requests a new resource" do
+        Foo::User.should_receive(:request).once.and_call_original
+        @new_user = Foo::User.build(:fullname => "Tobias Fünke")
+        @new_user.new?.should be_true
+        @new_user.fullname.should == "Tobias Fünke"
+        @new_user.email.should == "tobias@bluthcompany.com"
+      end
     end
   end
 
@@ -206,8 +256,8 @@ describe Her::Model::ORM do
         builder.use Her::Middleware::FirstLevelParseJSON
         builder.use Faraday::Request::UrlEncoded
         builder.adapter :test do |stub|
-          stub.post("/users") { |env| [200, {}, { :id => 1, :fullname => "Tobias Fünke" }.to_json] }
-          stub.post("/companies") { |env| [200, {}, { :errors => ["name is required"] }.to_json] }
+          stub.post("/users") { |env| [200, {}, { :id => 1, :fullname => Faraday::Utils.parse_query(env[:body])['fullname'], :email => Faraday::Utils.parse_query(env[:body])['email'] }.to_json] }
+          stub.post("/companies") { |env| [200, {}, { :errors =>{ :name => ["is required"] } }.to_json] }
         end
       end
 
@@ -216,9 +266,10 @@ describe Her::Model::ORM do
     end
 
     it "handle one-line resource creation" do
-      @user = Foo::User.create(:fullname => "Tobias Fünke")
+      @user = Foo::User.create(:fullname => "Tobias Fünke", :email => "tobias@bluth.com")
       @user.id.should == 1
       @user.fullname.should == "Tobias Fünke"
+      @user.email.should == "tobias@bluth.com"
     end
 
     it "handle resource creation through Model.new + #save" do
@@ -227,9 +278,20 @@ describe Her::Model::ORM do
       @user.fullname.should == "Tobias Fünke"
     end
 
+    it "handle resource creation through Model.new + #save!" do
+      @user = Foo::User.new(:fullname => "Tobias Fünke")
+      @user.save!.should be_true
+      @user.fullname.should == "Tobias Fünke"
+    end
+
     it "returns false when #save gets errors" do
       @company = Foo::Company.new
       @company.save.should be_false
+    end
+
+    it "raises ResourceInvalid when #save! gets errors" do
+      @company = Foo::Company.new
+      expect { @company.save! }.to raise_error Her::Errors::ResourceInvalid, "Remote validation failed: Name is required"
     end
 
     it "don't overwrite data if response is empty" do
@@ -301,133 +363,7 @@ describe Her::Model::ORM do
     end
   end
 
-  context "saving resources with overridden to_params" do
-    before do
-      Her::API.setup :url => "https://api.example.com" do |builder|
-        builder.use Her::Middleware::FirstLevelParseJSON
-        builder.use Faraday::Request::UrlEncoded
-        builder.adapter :test do |stub|
-          stub.post("/users") do |env|
-            body = {
-              :id => 1,
-              :fullname => Faraday::Utils.parse_query(env[:body])['fullname']
-            }.to_json
-            [200, {}, body]
-          end
-        end
-      end
-
-      spawn_model "Foo::User" do
-        def to_params
-          { :fullname => "Lindsay Fünke" }
-        end
-      end
-    end
-
-    it "changes the request parameters for one-line resource creation" do
-      @user = Foo::User.create(:fullname => "Tobias Fünke")
-      @user.fullname.should == "Lindsay Fünke"
-    end
-
-    it "changes the request parameters for Model.new + #save" do
-      @user = Foo::User.new(:fullname => "Tobias Fünke")
-      @user.save
-      @user.fullname.should == "Lindsay Fünke"
-    end
-  end
-
-  context "checking resource equality" do
-    before do
-      Her::API.setup :url => "https://api.example.com" do |builder|
-        builder.use Her::Middleware::FirstLevelParseJSON
-        builder.use Faraday::Request::UrlEncoded
-        builder.adapter :test do |stub|
-          stub.get("/users/1") { |env| [200, {}, { :id => 1, :fullname => "Lindsay Fünke" }.to_json] }
-          stub.get("/users/2") { |env| [200, {}, { :id => 1, :fullname => "Tobias Fünke" }.to_json] }
-          stub.get("/admins/1") { |env| [200, {}, { :id => 1, :fullname => "Lindsay Fünke" }.to_json] }
-        end
-      end
-
-      spawn_model "Foo::User"
-      spawn_model "Foo::Admin"
-    end
-
-    let(:user) { Foo::User.find(1) }
-
-    it "returns true for the exact same object" do
-      user.should == user
-    end
-
-    it "returns true for the same resource via find" do
-      user.should == Foo::User.find(1)
-    end
-
-    it "returns true for the same class with identical data" do
-      user.should == Foo::User.new(:id => 1, :fullname => "Lindsay Fünke")
-    end
-
-    it "returns true for a different resource with the same data" do
-      user.should == Foo::Admin.find(1)
-    end
-
-    it "returns false for the same class with different data" do
-      user.should_not == Foo::User.new(:id => 2, :fullname => "Tobias Fünke")
-    end
-
-    it "returns false for a non-resource with the same data" do
-      fake_user = stub(:data => { :id => 1, :fullname => "Lindsay Fünke" })
-      user.should_not == fake_user
-    end
-
-    it "delegates eql? to ==" do
-      other = Object.new
-      user.should_receive(:==).with(other).and_return(true)
-      user.eql?(other).should be_true
-    end
-
-    it "treats equal resources as equal for Array#uniq" do
-      user2 = Foo::User.find(1)
-      [user, user2].uniq.should == [user]
-    end
-
-    it "treats equal resources as equal for hash keys" do
-      Foo::User.find(1)
-      hash = { user => true }
-      hash[Foo::User.find(1)] = false
-      hash.size.should == 1
-      hash.should == { user => false }
-    end
-  end
-
-  context "when include_root_in_json is true" do
-    context "when include_root_in_json is true" do
-      before do
-        spawn_model "Foo::User" do
-          include_root_in_json true
-        end
-      end
-
-      it "wraps params in the element name" do
-        @new_user = Foo::User.new(:fullname => "Tobias Fünke")
-        @new_user.to_params.should == { :user => { :fullname => "Tobias Fünke" } }
-      end
-    end
-
-    context "when include_root_in_json is set to another value" do
-      before do
-        spawn_model "Foo::User" do
-          include_root_in_json :person
-        end
-      end
-
-      it "wraps params in the specified value" do
-        @new_user = Foo::User.new(:fullname => "Tobias Fünke")
-        @new_user.to_params.should == { :person => { :fullname => "Tobias Fünke" } }
-      end
-    end
-  end
-
-  context "when parse_root_in_json is set" do
+  context 'customizing HTTP methods' do
     before do
       Her::API.setup :url => "https://api.example.com" do |builder|
         builder.use Her::Middleware::FirstLevelParseJSON
@@ -435,53 +371,58 @@ describe Her::Model::ORM do
       end
     end
 
-    context "when parse_root_in_json is true" do
+    context 'create' do
       before do
         Her::API.default_api.connection.adapter :test do |stub|
-          stub.post("/users") { |env| [200, {}, { :user => { :id => 1, :fullname => "Lindsay Fünke" } }.to_json] }
-          stub.get("/users") { |env| [200, {}, [{ :user => { :id => 1, :fullname => "Lindsay Fünke" } }].to_json] }
-          stub.get("/users/1") { |env| [200, {}, { :user => { :id => 1, :fullname => "Lindsay Fünke" } }.to_json] }
-          stub.put("/users/1") { |env| [200, {}, { :user => { :id => 1, :fullname => "Tobias Fünke Jr." } }.to_json] }
+          stub.put('/users') { |env| [200, {}, { :id => 1, :fullname => 'Tobias Fünke' }.to_json] }
+        end
+        spawn_model 'Foo::User' do
+          attributes :fullname, :email
+          method_for :create, 'PUT'
+        end
+      end
+
+      context 'for top-level class' do
+        it 'uses the custom method (PUT) instead of default method (POST)' do
+          user = Foo::User.new(:fullname => 'Tobias Fünke')
+          user.should be_new
+          user.save.should be_true
+        end
+      end
+
+      context 'for children class' do
+        before do
+          class User < Foo::User; end
+          @spawned_models << :User
         end
 
-        spawn_model("Foo::User") { parse_root_in_json true }
-      end
-
-      it "parse the data from the JSON root element after .create" do
-        @new_user = Foo::User.create(:fullname => "Lindsay Fünke")
-        @new_user.fullname.should == "Lindsay Fünke"
-      end
-
-      it "parse the data from the JSON root element after .all" do
-        @users = Foo::User.all
-        @users.first.fullname.should == "Lindsay Fünke"
-      end
-
-      it "parse the data from the JSON root element after .find" do
-        @user = Foo::User.find(1)
-        @user.fullname.should == "Lindsay Fünke"
-      end
-
-      it "parse the data from the JSON root element after .save" do
-        @user = Foo::User.find(1)
-        @user.fullname = "Tobias Fünke"
-        @user.save
-        @user.fullname.should == "Tobias Fünke Jr."
+        it 'uses the custom method (PUT) instead of default method (POST)' do
+          user = User.new(:fullname => 'Tobias Fünke')
+          user.should be_new
+          user.save.should be_true
+        end
       end
     end
 
-    context "when parse_root_in_json is set to a symbol" do
+    context 'update' do
       before do
         Her::API.default_api.connection.adapter :test do |stub|
-          stub.post("/users") { |env| [200, {}, { :person => { :id => 1, :fullname => "Lindsay Fünke" } }.to_json] }
+          stub.get('/users/1') { |env| [200, {}, { :id => 1, :fullname => 'Lindsay Fünke' }.to_json] }
+          stub.post('/users/1') { |env| [200, {}, { :id => 1, :fullname => 'Tobias Fünke' }.to_json] }
         end
 
-        spawn_model("Foo::User") { parse_root_in_json :person }
+        spawn_model 'Foo::User' do
+          attributes :fullname, :email
+          method_for :update, :post
+        end
       end
 
-      it "parse the data with the symbol" do
-        @new_user = Foo::User.create(:fullname => "Lindsay Fünke")
-        @new_user.fullname.should == "Lindsay Fünke"
+      it 'uses the custom method (POST) instead of default method (PUT)' do
+        user = Foo::User.find(1)
+        user.fullname.should eq 'Lindsay Fünke'
+        user.fullname = 'Toby Fünke'
+        user.save
+        user.fullname.should eq 'Tobias Fünke'
       end
     end
   end

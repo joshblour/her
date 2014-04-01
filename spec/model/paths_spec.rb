@@ -125,6 +125,28 @@ describe Her::Model::Paths do
       end
     end
 
+    context "children model" do
+      before do
+        Her::API.setup :url => "https://api.example.com" do |builder|
+          builder.use Her::Middleware::FirstLevelParseJSON
+          builder.use Faraday::Request::UrlEncoded
+          builder.adapter :test do |stub|
+            stub.get("/users/foo") { |env| [200, {}, { :id => 'foo' }.to_json] }
+          end
+        end
+
+        spawn_model("Foo::Model") { include_root_in_json true }
+
+        class User < Foo::Model; end
+        @spawned_models << :User
+      end
+
+      it "builds path using the children model name" do
+        User.find('foo').id.should == 'foo'
+        User.find('foo').id.should == 'foo'
+      end
+    end
+
     context "nested model" do
       before do
         spawn_model "Foo::User"
@@ -190,11 +212,18 @@ describe Her::Model::Paths do
         @user.id.should == 1
         @user.fullname.should == "Tobias Fünke"
       end
+
+      it "maps a single resource using a scope to a Ruby object" do
+        Foo::User.scope :for_organization, lambda { |o| where(:organization_id => o) }
+        @user = Foo::User.for_organization(2).find(1)
+        @user.id.should == 1
+        @user.fullname.should == "Tobias Fünke"
+      end
     end
 
     describe "fetching a collection" do
       it "maps a collection of resources to an array of Ruby objects" do
-        @users = Foo::User.all(:_organization_id => 2)
+        @users = Foo::User.where(:_organization_id => 2).all
         @users.length.should == 2
         @users.first.fullname.should == "Tobias Fünke"
       end
@@ -285,7 +314,7 @@ describe Her::Model::Paths do
 
     describe "fetching a collection" do
       it "maps a collection of resources to an array of Ruby objects" do
-        @users = Foo::User.all(:_organization_id => 2)
+        @users = Foo::User.where(:_organization_id => 2).all
         @users.length.should == 2
         @users.first.fullname.should == "Tobias Fünke"
       end
@@ -303,7 +332,7 @@ describe Her::Model::Paths do
     describe "fetching a collection with absolute path" do
       it "maps a collection of resources to an array of Ruby objects" do
         Foo::User.collection_path '/api/' + Foo::User.collection_path
-        @users = Foo::User.all(:_organization_id => 2)
+        @users = Foo::User.where(:_organization_id => 2).all
         @users.length.should == 2
         @users.first.fullname.should == "Tobias Fünke"
       end

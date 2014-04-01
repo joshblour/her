@@ -28,10 +28,14 @@ module Her
         #    primary_key 'UserId'
         #  end
         #
-        # @param [Symbol] field
-        def primary_key(field = nil)
-          return @her_primary_key if field.nil?
-          @her_primary_key = field.to_sym
+        # @param [Symbol] value
+        def primary_key(value = nil)
+          @_her_primary_key ||= begin
+            superclass.primary_key if superclass.respond_to?(:primary_key)
+          end
+
+          return @_her_primary_key unless value
+          @_her_primary_key = value.to_sym
         end
 
         # Defines a custom collection path for the resource
@@ -41,14 +45,13 @@ module Her
         #    include Her::Model
         #    collection_path "/users"
         #  end
-        def collection_path(path=nil)
-          @_her_collection_path ||= begin
-            superclass.collection_path.dup if superclass.respond_to?(:collection_path)
+        def collection_path(path = nil)
+          if path.nil?
+            @_her_collection_path ||= root_element.to_s.pluralize
+          else
+            @_her_collection_path = path
+            @_her_resource_path = "#{path}/:id"
           end
-
-          return @_her_collection_path unless path
-          @_her_resource_path = "#{path}/:id"
-          @_her_collection_path = path
         end
 
         # Defines a custom resource path for the resource
@@ -74,27 +77,22 @@ module Her
         #    resource_path '/users/:id'
         #  end
         #
-        def resource_path(path=nil)
-          @_her_resource_path ||= begin
-            superclass.resource_path.dup if superclass.respond_to?(:resource_path)
+        def resource_path(path = nil)
+          if path.nil?
+            @_her_resource_path ||= "#{root_element.to_s.pluralize}/:id"
+          else
+            @_her_resource_path = path
           end
-
-          return @_her_resource_path unless path
-          @_her_resource_path = path
         end
 
         # Return a custom path based on the collection path and variable parameters
         #
-        # @example
-        #   class User
-        #     include Her::Model
-        #     collection_path "/utilisateurs"
-        #   end
-        #
-        #   User.all # Fetched via GET /utilisateurs
+        # @private
         def build_request_path(path=nil, parameters={})
+          parameters = parameters.try(:with_indifferent_access)
+
           unless path.is_a?(String)
-            parameters = path || {}
+            parameters = path.try(:with_indifferent_access) || parameters
             path =
               if parameters.include?(primary_key) && parameters[primary_key]
                 resource_path.dup
@@ -108,13 +106,14 @@ module Her
 
           path.gsub(/:([\w_]+)/) do
             # Look for :key or :_key, otherwise raise an exception
-            parameters.delete($1.to_sym) || parameters.delete("_#{$1}".to_sym) || raise(Her::Errors::PathError, "Missing :_#{$1} parameter to build the request path. Path is `#{path}`. Parameters are `#{parameters.inspect}`.")
+            value = $1.to_sym
+            parameters.delete(value) || parameters.delete(:"_#{value}") || raise(Her::Errors::PathError.new("Missing :_#{$1} parameter to build the request path. Path is `#{path}`. Parameters are `#{parameters.symbolize_keys.inspect}`.", $1))
           end
         end
 
         # @private
-        def build_request_path_from_string_or_symbol(path, attrs={})
-          path.is_a?(Symbol) ? "#{build_request_path(attrs)}/#{path}" : path
+        def build_request_path_from_string_or_symbol(path, params={})
+          path.is_a?(Symbol) ? "#{build_request_path(params)}/#{path}" : path
         end
       end
     end

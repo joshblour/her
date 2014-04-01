@@ -12,11 +12,16 @@ module Her
       #   @user = User.find(1)
       #   p @user # => #<User(/users/1) id=1 name="Tobias Fünke">
       def inspect
-        "#<#{self.class}(#{request_path}) #{attributes.keys.map { |k| "#{k}=#{attribute_for_inspect(send(k))}" }.join(" ")}>"
+        resource_path = begin
+          request_path
+        rescue Her::Errors::PathError => e
+          "<unknown path, missing `#{e.missing_parameter}`>"
+        end
+
+        "#<#{self.class}(#{resource_path}) #{attributes.keys.map { |k| "#{k}=#{attribute_for_inspect(send(k))}" }.join(" ")}>"
       end
 
       private
-      # @private
       def attribute_for_inspect(value)
         if value.is_a?(String) && value.length > 50
           "#{value[0..50]}...".inspect
@@ -27,8 +32,10 @@ module Her
         end
       end
 
+      # @private
       module ClassMethods
         # Finds a class at the same level as this one or at the global level.
+        #
         # @private
         def her_nearby_class(name)
           her_sibling_class(name) || name.constantize rescue nil
@@ -36,6 +43,7 @@ module Her
 
         protected
         # Looks for a class at the same level as this one with the given name.
+        #
         # @private
         def her_sibling_class(name)
           if mod = self.her_containing_module
@@ -45,6 +53,7 @@ module Her
         end
 
         # If available, returns the containing Module for this class.
+        #
         # @private
         def her_containing_module
           return unless self.name =~ /::/

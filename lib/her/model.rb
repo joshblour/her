@@ -1,6 +1,8 @@
 require "her/model/base"
+require "her/model/deprecated_methods"
 require "her/model/http"
 require "her/model/attributes"
+require "her/model/relation"
 require "her/model/orm"
 require "her/model/parse"
 require "her/model/associations"
@@ -25,6 +27,7 @@ module Her
 
     # Her modules
     include Her::Model::Base
+    include Her::Model::DeprecatedMethods
     include Her::Model::Attributes
     include Her::Model::ORM
     include Her::Model::HTTP
@@ -35,6 +38,7 @@ module Her
     include Her::Model::NestedAttributes
 
     # Supported ActiveModel modules
+    include ActiveModel::AttributeMethods
     include ActiveModel::Validations
     include ActiveModel::Conversion
     include ActiveModel::Dirty
@@ -43,22 +47,24 @@ module Her
 
     # Class methods
     included do
-      # Define the root element name, used when `parse_root_in_json` is set to `true`
-      root_element self.name.split("::").last.underscore.to_sym
-
-      # Define resource and collection paths
-      collection_path "#{root_element.to_s.pluralize}"
-      resource_path "#{root_element.to_s.pluralize}/:id"
-
       # Assign the default API
-      uses_api Her::API.default_api
+      use_api Her::API.default_api
+      method_for :create, :post
+      method_for :update, :put
+      method_for :find, :get
+      method_for :destroy, :delete
+      method_for :new, :get
 
       # Define the default primary key
       primary_key :id
 
+      # Define default storage accessors for errors and metadata
+      store_response_errors :response_errors
+      store_metadata :metadata
+
       # Configure ActiveModel callbacks
       extend ActiveModel::Callbacks
-      define_model_callbacks :create, :update, :save, :find, :destroy
+      define_model_callbacks :create, :update, :save, :find, :destroy, :initialize
     end
   end
 end

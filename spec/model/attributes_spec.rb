@@ -18,18 +18,18 @@ describe Her::Model::Attributes do
 
     it "handles method missing for getter" do
       @new_user = Foo::User.new(:fullname => 'Mayonegg')
-      lambda { @new_user.unknown_method_for_a_user }.should raise_error(NoMethodError)
-      expect { @new_user.fullname }.to_not raise_error(NoMethodError)
+      expect { @new_user.unknown_method_for_a_user }.to raise_error(NoMethodError)
+      expect { @new_user.fullname }.not_to raise_error()
     end
 
     it "handles method missing for setter" do
       @new_user = Foo::User.new
-      expect { @new_user.fullname = "Tobias Fünke" }.to_not raise_error(NoMethodError)
+      expect { @new_user.fullname = "Tobias Fünke" }.not_to raise_error()
     end
 
     it "handles method missing for query" do
       @new_user = Foo::User.new
-      expect { @new_user.fullname? }.to_not raise_error(NoMethodError)
+      expect { @new_user.fullname? }.not_to raise_error()
     end
 
     it "handles respond_to for getter" do
@@ -48,16 +48,16 @@ describe Her::Model::Attributes do
       @new_user.should respond_to(:fullname?)
     end
 
-    it "handles has_data? for getter" do
+    it "handles has_attribute? for getter" do
       @new_user = Foo::User.new(:fullname => 'Mayonegg')
-      @new_user.should_not have_data(:unknown_method_for_a_user)
-      @new_user.should have_data(:fullname)
+      @new_user.should_not have_attribute(:unknown_method_for_a_user)
+      @new_user.should have_attribute(:fullname)
     end
 
-    it "handles get_data for getter" do
+    it "handles get_attribute for getter" do
       @new_user = Foo::User.new(:fullname => 'Mayonegg')
-      @new_user.get_data(:unknown_method_for_a_user).should be_nil
-      @new_user.get_data(:fullname).should == 'Mayonegg'
+      @new_user.get_attribute(:unknown_method_for_a_user).should be_nil
+      @new_user.get_attribute(:fullname).should == 'Mayonegg'
     end
   end
 
@@ -113,7 +113,7 @@ describe Her::Model::Attributes do
     end
 
     it "returns false for a non-resource with the same data" do
-      fake_user = stub(:data => { :id => 1, :fullname => "Lindsay Fünke" })
+      fake_user = double(:data => { :id => 1, :fullname => "Lindsay Fünke" })
       user.should_not == fake_user
     end
 
@@ -134,6 +134,129 @@ describe Her::Model::Attributes do
       hash[Foo::User.find(1)] = false
       hash.size.should == 1
       hash.should == { user => false }
+    end
+  end
+
+  context "handling metadata and errors" do
+    before do
+      Her::API.setup :url => "https://api.example.com" do |builder|
+        builder.use Her::Middleware::FirstLevelParseJSON
+        builder.adapter :test do |stub|
+          stub.post("/users") { |env| [200, {}, { :id => 1, :fullname => "Tobias Fünke" }.to_json] }
+        end
+      end
+
+      spawn_model 'Foo::User' do
+        store_response_errors :errors
+        store_metadata :my_data
+      end
+
+      @user = Foo::User.new(:_errors => ["Foo", "Bar"], :_metadata => { :secret => true })
+    end
+
+    it "should return response_errors stored in the method provided by `store_response_errors`" do
+      @user.errors.should == ["Foo", "Bar"]
+    end
+
+    it "should remove the default method for errors" do
+      expect { @user.response_errors }.to raise_error(NoMethodError)
+    end
+
+    it "should return metadata stored in the method provided by `store_metadata`" do
+      @user.my_data.should == { :secret => true }
+    end
+
+    it "should remove the default method for metadata" do
+      expect { @user.metadata }.to raise_error(NoMethodError)
+    end
+
+    it "should work with #save" do
+      @user.assign_attributes(:fullname => "Tobias Fünke")
+      @user.save
+      expect { @user.metadata }.to raise_error(NoMethodError)
+      @user.my_data.should be_empty
+      @user.errors.should be_empty
+    end
+  end
+
+  context "overwriting default attribute methods" do
+    context "for getter method" do
+      before do
+        Her::API.setup :url => "https://api.example.com" do |builder|
+          builder.use Her::Middleware::FirstLevelParseJSON
+          builder.adapter :test do |stub|
+            stub.get("/users/1") { |env| [200, {}, { :id => 1, :fullname => "Tobias Fünke", :document => { :url => "http://example.com" } }.to_json] }
+          end
+        end
+
+        spawn_model 'Foo::User' do
+          def document
+            @attributes[:document][:url]
+          end
+        end
+      end
+
+      it "bypasses Her's method" do
+        @user = Foo::User.find(1)
+        @user.document.should == "http://example.com"
+
+        @user = Foo::User.find(1)
+        @user.document.should == "http://example.com"
+      end
+    end
+
+    context "for setter method" do
+      before do
+        Her::API.setup :url => "https://api.example.com" do |builder|
+          builder.use Her::Middleware::FirstLevelParseJSON
+          builder.adapter :test do |stub|
+            stub.get("/users/1") { |env| [200, {}, { :id => 1, :fullname => "Tobias Fünke", :document => { :url => "http://example.com" } }.to_json] }
+          end
+        end
+
+        spawn_model 'Foo::User' do
+          def document=(document)
+            @attributes[:document] = document[:url]
+          end
+        end
+      end
+
+      it "bypasses Her's method" do
+        @user = Foo::User.find(1)
+        @user.document.should == "http://example.com"
+
+        @user = Foo::User.find(1)
+        @user.document.should == "http://example.com"
+      end
+    end
+
+    context "for predicate method" do
+      before do
+        Her::API.setup :url => "https://api.example.com" do |builder|
+          builder.use Her::Middleware::FirstLevelParseJSON
+          builder.adapter :test do |stub|
+            stub.get("/users/1") { |env| [200, {}, { :id => 1, :fullname => "Lindsay Fünke", :document => { :url => nil } }.to_json] }
+            stub.get("/users/2") { |env| [200, {}, { :id => 1, :fullname => "Tobias Fünke", :document => { :url => "http://example.com" } }.to_json] }
+          end
+        end
+
+        spawn_model 'Foo::User' do
+          def document?
+            document[:url].present?
+          end
+        end
+      end
+
+      it "byoasses Her's method" do
+        @user = Foo::User.find(1)
+        @user.document?.should be_false
+
+        @user = Foo::User.find(1)
+        @user.document?.should be_false
+
+        @user = Foo::User.find(2)
+        @user.document?.should be_true
+      end
     end
   end
 end

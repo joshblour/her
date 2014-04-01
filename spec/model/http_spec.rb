@@ -24,6 +24,14 @@ describe Her::Model::HTTP do
       its(:base_uri) { should == "https://api.example.com" }
     end
 
+    context "when using a proc for uses_api" do
+      before do
+        Foo::User.uses_api lambda { Her::API.new :url => 'http://api-lambda.example.com' }
+      end
+
+      specify { Foo::User.her_api.base_uri.should == 'http://api-lambda.example.com' }
+    end
+
     context "when binding two models to two different instances of Her::API" do
       before do
         Foo::User.uses_api api1
@@ -161,13 +169,15 @@ describe Her::Model::HTTP do
     subject { Foo::User }
 
     describe :custom_get do
-      before { Foo::User.custom_get :popular, :recent }
-      it { should respond_to(:popular) }
-      it { should respond_to(:recent) }
+      context "without cache" do
+        before { Foo::User.custom_get :popular, :recent }
+        it { should respond_to(:popular) }
+        it { should respond_to(:recent) }
 
-      context "making the HTTP request" do
-        subject { Foo::User.popular }
-        its(:length) { should == 2 }
+        context "making the HTTP request" do
+          subject { Foo::User.popular }
+          its(:length) { should == 2 }
+        end
       end
     end
 

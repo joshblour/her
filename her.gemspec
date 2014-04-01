@@ -7,7 +7,7 @@ Gem::Specification.new do |s|
   s.version     = Her::VERSION
   s.authors     = ["Rémi Prévost"]
   s.email       = ["remi@exomel.com"]
-  s.homepage    = "http://remiprev.github.com/her"
+  s.homepage    = "http://her-rb.org"
   s.license     = "MIT"
   s.summary     = "A simple Representational State Transfer-based Hypertext Transfer Protocol-powered Object Relational Mapper. Her?"
   s.description = "Her is an ORM that maps REST resources and collections to Ruby objects"
@@ -20,6 +20,7 @@ Gem::Specification.new do |s|
   s.add_development_dependency "rake", "~> 10.0"
   s.add_development_dependency "rspec", "~> 2.13"
   s.add_development_dependency "fivemat", "~> 1.2"
+  s.add_development_dependency "json", "~> 1.7.7"
 
   s.add_runtime_dependency "activemodel", ">= 3.0.0"
   s.add_runtime_dependency "activesupport", ">= 3.0.0"
