@@ -24,7 +24,7 @@ module Her
         # Main request wrapper around Her::API. Used to make custom request to the API.
         # @private
         def request(attrs={})
-          request = her_api.request(attrs)
+          request = her_api.request(attrs)          
 
           if block_given?
             yield request[:parsed_data], request[:response]
